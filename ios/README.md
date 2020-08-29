@@ -1,6 +1,6 @@
-#iOS App for experiment
+# iOS App for experiment
 
-##to run:
+## to run:
 
 Open in xcode, connect device and start server.
 
