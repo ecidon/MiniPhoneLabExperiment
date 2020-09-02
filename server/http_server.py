@@ -64,10 +64,11 @@ if __name__ == '__main__':
             path = self.path[1:]
             out_file = Path(str(self.out_root / path).replace(str(self.image_root),""))
             out_file.parent.mkdir(parents=True, exist_ok=True)
-            data_string = self.rfile.read(int(self.headers['Content-Length']))
             self.send_response(200)
+            length = int(self.headers['Content-Length'])
             self.end_headers()
-            out_file.write_bytes(data_string)
+            data_bytes = self.rfile.read(length)
+            out_file.write_bytes(data_bytes)
 
     httpd = HTTPServer((args.ip, args.port), RequestHandler)
     httpd.serve_forever()

@@ -48,6 +48,7 @@ import android.media.ImageReader;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -72,13 +73,16 @@ import java.io.ByteArrayOutputStream;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -557,14 +561,14 @@ public class Camera2RawFragment extends Fragment
 
                 if (jpegBuilder != null) {
                     jpegBuilder.setResult(result);
-                    sb.append("Saving JPEG as: ");
+                    sb.append("Uploading JPEG as: ");
                     sb.append(jpegBuilder.getSaveLocation());
                 }
                 if (rawBuilder != null) {
                     rawBuilder.setResult(result);
                     if (jpegBuilder != null) sb.append(", ");
-                    sb.append("Saving RAW as: ");
-                    sb.append(rawBuilder.getSaveLocation());
+                    sb.append("Uploading RAW as: ");
+                    sb.append(rawBuilder.getSaveLocation().replace("jpg", "dng"));
                 }
 
                 // If we have all the results necessary, save the image to a file in the background.
@@ -1450,16 +1454,19 @@ public class Camera2RawFragment extends Fragment
 
         private final String mSERVER_ADDRESS;
 
+        private final File mOutputFile;
+
         /**
          * A reference counted wrapper for the ImageReader that owns the given image.
          */
         private final RefCountedAutoCloseable<ImageReader> mReader;
 
-        private ImageSaver(Image image, String file, CaptureResult result, String SERVER_ADDRESS,
+        private ImageSaver(Image image, String file, File outputFile,CaptureResult result, String SERVER_ADDRESS,
                            CameraCharacteristics characteristics, Context context,
                            RefCountedAutoCloseable<ImageReader> reader) {
             mImage = image;
             mFile = file;
+            mOutputFile = outputFile;
             mCaptureResult = result;
             mCharacteristics = characteristics;
             mContext = context;
@@ -1471,17 +1478,19 @@ public class Camera2RawFragment extends Fragment
             @Override
             protected Void doInBackground(byte[]... bytes) {
                 Log.i(TAG, String.format("uploading jpg image %s", mFile));
+                int length = bytes[0].length;
                     try{
                     URL url = new URL(String.format("%s%s", mSERVER_ADDRESS, mFile));
                     HttpURLConnection urlConnection = (HttpURLConnection) url.openConnection();
                     try {
                         urlConnection.setRequestMethod("POST");
-                        urlConnection.setRequestProperty("Content-Length", Integer.toString(bytes[0].length));
-                        Log.i(TAG, String.format("Content-Length: %d", bytes[0].length));
                         urlConnection.setDoOutput(true);
-                        urlConnection.setChunkedStreamingMode(0);
+                        urlConnection.setFixedLengthStreamingMode(length);
+                        urlConnection.setRequestProperty("Content-Length", Integer.toString(length));
                         OutputStream out = new BufferedOutputStream(urlConnection.getOutputStream());
                         out.write(bytes[0]);
+                        out.flush();
+                        out.close();
                         int code = urlConnection.getResponseCode();
                         if (code == 200) {
                             Log.i(TAG, "Response Code 200");
@@ -1501,7 +1510,8 @@ public class Camera2RawFragment extends Fragment
         class PostDngTask extends AsyncTask<byte[],Void,Void> {
             @Override
             protected Void doInBackground(byte[]... bytes) {
-                Log.i(TAG, String.format("uploading raw image %s", mFile));
+                int length = bytes[0].length;
+                Log.i(TAG, String.format("uploading raw image %s", mFile.replace("jpg", "dng")));
                 try{
                     URL url = new URL(
                             String.format("%s%s",
@@ -1510,17 +1520,17 @@ public class Camera2RawFragment extends Fragment
                     HttpURLConnection urlConnection = (HttpURLConnection) url.openConnection();
                     try {
                         urlConnection.setRequestMethod("POST");
-                        Log.i(TAG, String.format("Content-Length: %d", bytes[0].length));
-                        urlConnection.setRequestProperty("Content-Length", Integer.toString(bytes[0].length));
                         urlConnection.setDoOutput(true);
-                        urlConnection.setChunkedStreamingMode(0);
+                        urlConnection.setFixedLengthStreamingMode(length);
+                        urlConnection.setRequestProperty("Content-Length", Integer.toString(length));
                         OutputStream out = new BufferedOutputStream(urlConnection.getOutputStream());
                         out.write(bytes[0]);
+                        out.flush();
+                        out.close();
                         int code = urlConnection.getResponseCode();
                         if (code == 200) {
                             Log.i(TAG, "Response Code 200");
                         }
-                        urlConnection.connect();
                     } finally {
                         urlConnection.disconnect();
                     }
@@ -1542,6 +1552,11 @@ public class Camera2RawFragment extends Fragment
                     buffer.get(bytes);
                     Log.i(TAG, String.format("uploading jpg image %s", mFile));
                     try {
+                        try {
+                            String str = new String(bytes, "UTF-8");
+                        } catch (UnsupportedEncodingException e) {
+                            e.printStackTrace();
+                        }
                         new PostJpegTask().execute(bytes).get();
                     } catch (InterruptedException e) {
                         e.printStackTrace();
@@ -1561,6 +1576,7 @@ public class Camera2RawFragment extends Fragment
                         e.printStackTrace();
                     }
                     byte[] bytes = byteOutput.toByteArray();
+                    closeOutput(byteOutput);
                     try {
                         new PostDngTask().execute(bytes).get();
                     } catch (InterruptedException e) {
@@ -1594,6 +1610,7 @@ public class Camera2RawFragment extends Fragment
          */
         public static class ImageSaverBuilder {
             private Image mImage;
+            private File mOutputFile;
             private String mFile;
             private CaptureResult mCaptureResult;
             private CameraCharacteristics mCharacteristics;
@@ -1631,6 +1648,12 @@ public class Camera2RawFragment extends Fragment
                 return this;
             }
 
+            public synchronized ImageSaverBuilder setOutputFile(final File file) {
+                if (file == null) throw new NullPointerException();
+                mOutputFile = file;
+                return this;
+            }
+
             public synchronized ImageSaverBuilder setFile(final String file) {
                 if (file == null) throw new NullPointerException();
                 mFile = file;
@@ -1654,7 +1677,7 @@ public class Camera2RawFragment extends Fragment
                 if (!isComplete()) {
                     return null;
                 }
-                return new ImageSaver(mImage, mFile, mCaptureResult, mSERVER_ADDRESS, mCharacteristics, mContext,
+                return new ImageSaver(mImage, mFile, mOutputFile, mCaptureResult, mSERVER_ADDRESS, mCharacteristics, mContext,
                         mReader);
             }
 
