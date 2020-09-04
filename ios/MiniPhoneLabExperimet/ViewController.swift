@@ -36,6 +36,7 @@ class ViewController: UIViewController, UINavigationControllerDelegate, UIImageP
     }
     
     override func viewDidAppear(_ animated: Bool) {
+        UIApplication.shared.isIdleTimerDisabled = true
         super.viewDidAppear(animated)
         captureSession = AVCaptureSession()
         captureSession.sessionPreset = .photo
@@ -231,6 +232,7 @@ class ViewController: UIViewController, UINavigationControllerDelegate, UIImageP
     }
     
     override func viewWillDisappear(_ animated: Bool) {
+        UIApplication.shared.isIdleTimerDisabled = false
         super.viewWillDisappear(animated)
         self.captureSession.stopRunning()
     }
